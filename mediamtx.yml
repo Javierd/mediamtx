@@ -413,12 +413,41 @@ webrtcTrackGatherTimeout: 2s
 webrtcSTUNGatherTimeout: 5s
 
 ###############################################
+# Global settings -> MSE server
+
+# MSE (fMP4 over WebSocket) server
+#
+# Enable or disable the MSE server.
+mse: yes
+
+# Address of the MSE server.
+mseAddress: :8890
+
+# Enable encryption. This flag is ineffective when using plain HTTP.
+mseEncryption: no
+
+# Private key used to generate the HTTPS certificate.
+mseServerKey: server.key
+
+# HTTPS certificate.
+mseServerCert: server.crt
+
+# Value of the Access-Control-Allow-Origin header.
+mseAllowOrigin: "*"
+
+# Trusted proxies (X-Forwarded-For source). Use CIDR notation.
+mseTrustedProxies: []
+
+# Close an inactive path-specific muxer after this duration.
+mseMuxerCloseAfter: 60s
+
+###############################################
 # Global settings -> SRT server
 
 # Enable publishing and reading streams with the SRT protocol.
 srt: yes
 # Address of the SRT listener.
-srtAddress: :8890
+srtAddress: :8891
 
 ###############################################
 # Default path settings

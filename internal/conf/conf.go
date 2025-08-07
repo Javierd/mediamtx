@@ -154,8 +154,7 @@ var defaultAuthInternalUsers = AuthInternalUsers{
 	},
 }
 
-// Conf is a configuration.
-// WARNING: Avoid using slices directly due to https://github.com/golang/go/issues/21092
+// Conf is a MediaMTX configuration.
 type Conf struct {
 	// General
 	LogLevel            LogLevel        `json:"logLevel"`
@@ -294,6 +293,16 @@ type Conf struct {
 	WebRTCICEHostNAT1To1IPs     *[]string        `json:"webrtcICEHostNAT1To1IPs,omitempty"` // deprecated
 	WebRTCICEServers            *[]string        `json:"webrtcICEServers,omitempty"`        // deprecated
 
+	// MSE (fMP4 over WebSocket) server
+	MSE               bool       `json:"mse"`
+	MSEAddress        string     `json:"mseAddress"`
+	MSEEncryption     bool       `json:"mseEncryption"`
+	MSEServerKey      string     `json:"mseServerKey"`
+	MSEServerCert     string     `json:"mseServerCert"`
+	MSEAllowOrigin    string     `json:"mseAllowOrigin"`
+	MSETrustedProxies IPNetworks `json:"mseTrustedProxies"`
+	MSEMuxerCloseAfter Duration  `json:"mseMuxerCloseAfter"`
+
 	// SRT server
 	SRT        bool   `json:"srt"`
 	SRTAddress string `json:"srtAddress"`
@@ -423,9 +432,17 @@ func (conf *Conf) setDefaults() {
 	conf.WebRTCTrackGatherTimeout = 2 * Duration(time.Second)
 	conf.WebRTCSTUNGatherTimeout = 5 * Duration(time.Second)
 
+	// MSE server
+	conf.MSE = true
+	conf.MSEAddress = ":8890"
+	conf.MSEServerKey = "server.key"
+	conf.MSEServerCert = "server.crt"
+	conf.MSEAllowOrigin = "*"
+	conf.MSEMuxerCloseAfter = 60 * Duration(time.Second)
+
 	// SRT server
 	conf.SRT = true
-	conf.SRTAddress = ":8890"
+	conf.SRTAddress = ":8891"
 
 	conf.PathDefaults.setDefaults()
 }
@@ -725,6 +742,12 @@ func (conf *Conf) Validate(l logger.Writer) error {
 			return fmt.Errorf("at least one between 'webrtcIPsFromInterfaces' or 'webrtcAdditionalHosts' must be filled")
 		}
 	}
+
+		// MSE (fMP4 over WebSocket)
+	// no deprecated fields to handle
+
+	// SRT
+	// no deprecated fields to handle
 
 	// Record (deprecated)
 
