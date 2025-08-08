@@ -35,7 +35,7 @@ func isHTTPRequest(r *Request) bool {
 	}
 
 	switch r.Protocol {
-	case ProtocolHLS, ProtocolWebRTC:
+	case ProtocolHLS, ProtocolWebRTC, ProtocolMSE:
 		return true
 	}
 

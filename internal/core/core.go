@@ -28,6 +28,7 @@ import (
 	"github.com/bluenviron/mediamtx/internal/recordcleaner"
 	"github.com/bluenviron/mediamtx/internal/rlimit"
 	"github.com/bluenviron/mediamtx/internal/servers/hls"
+	"github.com/bluenviron/mediamtx/internal/servers/mse"
 	"github.com/bluenviron/mediamtx/internal/servers/rtmp"
 	"github.com/bluenviron/mediamtx/internal/servers/rtsp"
 	"github.com/bluenviron/mediamtx/internal/servers/srt"
@@ -93,6 +94,7 @@ type Core struct {
 	rtmpsServer     *rtmp.Server
 	hlsServer       *hls.Server
 	webRTCServer    *webrtc.Server
+	mseServer       *mse.Server
 	srtServer       *srt.Server
 	api             *api.API
 	confWatcher     *confwatcher.ConfWatcher
@@ -574,6 +576,26 @@ func (p *Core) createResources(initial bool) error {
 		p.webRTCServer = i
 	}
 
+	if p.conf.MSE && p.mseServer == nil {
+		i := &mse.Server{
+			Address:        p.conf.MSEAddress,
+			Encryption:     p.conf.MSEEncryption,
+			ServerKey:      p.conf.MSEServerKey,
+			ServerCert:     p.conf.MSEServerCert,
+			AllowOrigin:    p.conf.MSEAllowOrigin,
+			TrustedProxies: p.conf.MSETrustedProxies,
+			ReadTimeout:    p.conf.ReadTimeout,
+			MuxerCloseAfter: p.conf.MSEMuxerCloseAfter,
+			PathManager:    p.pathManager,
+			Parent:         p,
+		}
+		err = i.Initialize()
+		if err != nil {
+			return err
+		}
+		p.mseServer = i
+	}
+
 	if p.conf.SRT &&
 		p.srtServer == nil {
 		i := &srt.Server{
@@ -806,11 +828,7 @@ func (p *Core) closeResources(newConf *conf.Conf, calledByAPI bool) {
 		newConf.HLSPartDuration != p.conf.HLSPartDuration ||
 		newConf.HLSSegmentMaxSize != p.conf.HLSSegmentMaxSize ||
 		newConf.HLSDirectory != p.conf.HLSDirectory ||
-		newConf.ReadTimeout != p.conf.ReadTimeout ||
-		newConf.HLSMuxerCloseAfter != p.conf.HLSMuxerCloseAfter ||
-		closePathManager ||
-		closeMetrics ||
-		closeLogger
+		newConf.HLSMuxerCloseAfter != p.conf.HLSMuxerCloseAfter
 
 	closeWebRTCServer := newConf == nil ||
 		newConf.WebRTC != p.conf.WebRTC ||
@@ -820,7 +838,6 @@ func (p *Core) closeResources(newConf *conf.Conf, calledByAPI bool) {
 		newConf.WebRTCServerCert != p.conf.WebRTCServerCert ||
 		newConf.WebRTCAllowOrigin != p.conf.WebRTCAllowOrigin ||
 		!reflect.DeepEqual(newConf.WebRTCTrustedProxies, p.conf.WebRTCTrustedProxies) ||
-		newConf.ReadTimeout != p.conf.ReadTimeout ||
 		newConf.WebRTCLocalUDPAddress != p.conf.WebRTCLocalUDPAddress ||
 		newConf.WebRTCLocalTCPAddress != p.conf.WebRTCLocalTCPAddress ||
 		newConf.WebRTCIPsFromInterfaces != p.conf.WebRTCIPsFromInterfaces ||
@@ -829,10 +846,17 @@ func (p *Core) closeResources(newConf *conf.Conf, calledByAPI bool) {
 		!reflect.DeepEqual(newConf.WebRTCICEServers2, p.conf.WebRTCICEServers2) ||
 		newConf.WebRTCHandshakeTimeout != p.conf.WebRTCHandshakeTimeout ||
 		newConf.WebRTCSTUNGatherTimeout != p.conf.WebRTCSTUNGatherTimeout ||
-		newConf.WebRTCTrackGatherTimeout != p.conf.WebRTCTrackGatherTimeout ||
-		closeMetrics ||
-		closePathManager ||
-		closeLogger
+		newConf.WebRTCTrackGatherTimeout != p.conf.WebRTCTrackGatherTimeout
+
+	closeMSEServer := newConf == nil ||
+		newConf.MSE != p.conf.MSE ||
+		newConf.MSEAddress != p.conf.MSEAddress ||
+		newConf.MSEEncryption != p.conf.MSEEncryption ||
+		newConf.MSEServerKey != p.conf.MSEServerKey ||
+		newConf.MSEServerCert != p.conf.MSEServerCert ||
+		newConf.MSEAllowOrigin != p.conf.MSEAllowOrigin ||
+		!reflect.DeepEqual(newConf.MSETrustedProxies, p.conf.MSETrustedProxies) ||
+		newConf.MSEMuxerCloseAfter != p.conf.MSEMuxerCloseAfter
 
 	closeSRTServer := newConf == nil ||
 		newConf.SRT != p.conf.SRT ||
@@ -863,6 +887,7 @@ func (p *Core) closeResources(newConf *conf.Conf, calledByAPI bool) {
 		closeRTMPServer ||
 		closeHLSServer ||
 		closeWebRTCServer ||
+		closeMSEServer ||
 		closeSRTServer ||
 		closeLogger
 
@@ -888,6 +913,11 @@ func (p *Core) closeResources(newConf *conf.Conf, calledByAPI bool) {
 	if closeWebRTCServer && p.webRTCServer != nil {
 		p.webRTCServer.Close()
 		p.webRTCServer = nil
+	}
+
+	if closeMSEServer && p.mseServer != nil {
+		p.mseServer.Close()
+		p.mseServer = nil
 	}
 
 	if closeHLSServer && p.hlsServer != nil {

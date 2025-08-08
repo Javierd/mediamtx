@@ -23,6 +23,11 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+type wsMessage struct {
+	msgType int
+	byts    []byte
+}
+
 // ServerConn is a server-side WebSocket connection with
 // automatic, periodic ping-pong
 type ServerConn struct {
@@ -30,7 +35,7 @@ type ServerConn struct {
 
 	// in
 	terminate chan struct{}
-	write     chan []byte
+	write     chan wsMessage
 
 	// out
 	writeErr chan error
@@ -46,7 +51,7 @@ func NewServerConn(w http.ResponseWriter, req *http.Request) (*ServerConn, error
 	c := &ServerConn{
 		wc:        wc,
 		terminate: make(chan struct{}),
-		write:     make(chan []byte),
+		write:     make(chan wsMessage),
 		writeErr:  make(chan error),
 	}
 
@@ -79,9 +84,9 @@ func (c *ServerConn) run() {
 
 	for {
 		select {
-		case byts := <-c.write:
+		case msg := <-c.write:
 			c.wc.SetWriteDeadline(time.Now().Add(writeTimeout)) //nolint:errcheck
-			err := c.wc.WriteMessage(websocket.TextMessage, byts)
+			err := c.wc.WriteMessage(msg.msgType, msg.byts)
 			c.writeErr <- err
 
 		case <-pingTicker.C:
@@ -107,7 +112,17 @@ func (c *ServerConn) WriteJSON(in interface{}) error {
 	}
 
 	select {
-	case c.write <- byts:
+	case c.write <- wsMessage{msgType: websocket.TextMessage, byts: byts}:
+		return <-c.writeErr
+	case <-c.terminate:
+		return fmt.Errorf("terminated")
+	}
+}
+
+// Write writes a binary message.
+func (c *ServerConn) Write(byts []byte) error {
+	select {
+	case c.write <- wsMessage{msgType: websocket.BinaryMessage, byts: byts}:
 		return <-c.writeErr
 	case <-c.terminate:
 		return fmt.Errorf("terminated")
