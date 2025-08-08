@@ -24,9 +24,6 @@ var indexHTML []byte
 //go:embed player.js
 var playerJS []byte
 
-//go:embed example.html
-var exampleHTML []byte
-
 type httpServer struct {
 	address        string
 	encryption     bool
@@ -154,12 +151,6 @@ func (s *httpServer) onRequest(ctx *gin.Context) {
 			ctx.Header("Content-Type", "application/javascript")
 			ctx.Writer.WriteHeader(http.StatusOK)
 			ctx.Writer.Write(playerJS)
-			return
-		case strings.HasSuffix(ctx.Request.URL.Path, "/example.html") || ctx.Request.URL.Path == "/example":
-			ctx.Header("Cache-Control", "no-cache")
-			ctx.Header("Content-Type", "text/html")
-			ctx.Writer.WriteHeader(http.StatusOK)
-			ctx.Writer.Write(exampleHTML)
 			return
 		case ctx.Request.URL.Path == "/favicon.ico":
 			return

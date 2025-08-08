@@ -1,8 +1,10 @@
 package httpp
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httputil"
 
@@ -30,6 +32,40 @@ func (w *loggerWriter) Write(b []byte) (int, error) {
 func (w *loggerWriter) WriteHeader(statusCode int) {
 	w.status = statusCode
 	w.w.WriteHeader(statusCode)
+}
+
+// Hijack implements http.Hijacker by delegating to the underlying writer.
+func (w *loggerWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := w.w.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, fmt.Errorf("hijacker not supported")
+}
+
+// Flush implements http.Flusher by delegating to the underlying writer.
+func (w *loggerWriter) Flush() {
+	if f, ok := w.w.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// CloseNotify implements http.CloseNotifier by delegating to the underlying writer.
+// Deprecated: http.CloseNotifier is deprecated, but some stacks still use it.
+func (w *loggerWriter) CloseNotify() <-chan bool {
+	if cn, ok := w.w.(http.CloseNotifier); ok {
+		return cn.CloseNotify()
+	}
+	ch := make(chan bool)
+	close(ch)
+	return ch
+}
+
+// Push implements http.Pusher by delegating to the underlying writer.
+func (w *loggerWriter) Push(target string, opts *http.PushOptions) error {
+	if p, ok := w.w.(http.Pusher); ok {
+		return p.Push(target, opts)
+	}
+	return http.ErrNotSupported
 }
 
 func (w *loggerWriter) dump() string {
