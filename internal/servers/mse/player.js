@@ -27,7 +27,7 @@ class MediaMTXMSEPlayer {
     this.sourceBuffer = null;
     this.queue = [];
     this.appending = false;
-    this.retryPause = 2000;
+    this.retryPause = conf.retryPause ?? 2000;
     this.restartTimeout = null;
     this.pendingMime = null;
     this.retryId = 0; // increases on each retry to invalidate stale handlers
