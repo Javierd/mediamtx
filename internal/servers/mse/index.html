@@ -13,5 +13,48 @@ html, body { margin:0; padding:0; height:100%; background:#1e1e1e; }
 <video id="video" playsinline muted autoplay controls></video>
 <div id="message"></div>
 <script src="player.js"></script>
+<script>
+(function(){
+  const video = document.getElementById('video');
+  const message = document.getElementById('message');
+
+  const setMessage = (s) => { 
+    message.textContent = s || ''; 
+    message.style.display = s ? 'flex' : 'none'; 
+  };
+
+  function wsURL() {
+    const loc = window.location;
+    const proto = (loc.protocol === 'https:') ? 'wss' : 'ws';
+    // path without trailing slash
+    const path = loc.pathname.replace(/\/$/, '');
+    return `${proto}://${loc.host}${path}`;
+  }
+
+  function start() {
+    setMessage('connecting...');
+
+    const player = new MediaMTXMSEPlayer({
+      url: wsURL(),
+      videoElement: video,
+      onError: (err) => {
+        setMessage(err);
+      }
+    });
+
+    // Clear message when video starts playing
+    video.addEventListener('playing', () => {
+      setMessage('');
+    });
+
+    // Optional: handle page unload
+    window.addEventListener('beforeunload', () => {
+      player.close();
+    });
+  }
+
+  window.addEventListener('load', start);
+})();
+</script>
 </body>
 </html>
