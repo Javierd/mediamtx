@@ -118,12 +118,6 @@ func (s *httpServer) onRequest(ctx *gin.Context) {
 			return
 		}
 
-		c, err := websocket.NewServerConn(ctx.Writer, ctx.Request)
-		if err != nil {
-			return
-		}
-		defer c.Close()
-
 		mux, err := s.parent.getMuxer(serverGetMuxerReq{
 			path:       path,
 			remoteAddr: httpp.RemoteAddr(ctx),
@@ -139,6 +133,14 @@ func (s *httpServer) onRequest(ctx *gin.Context) {
 			ctx.Writer.WriteHeader(http.StatusNotFound)
 			return
 		}
+
+		// perform WebSocket upgrade only after we've confirmed the stream exists
+		c, err := websocket.NewServerConn(ctx.Writer, ctx.Request)
+		if err != nil {
+			return
+		}
+		defer c.Close()
+
 		mi.handleWS(c)
 		return
 	}

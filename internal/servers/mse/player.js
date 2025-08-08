@@ -29,6 +29,8 @@ class MediaMTXMSEPlayer {
     this.appending = false;
     this.retryPause = 2000;
     this.restartTimeout = null;
+    this.pendingMime = null;
+    this.retryId = 0; // increases on each retry to invalidate stale handlers
     
     this.start();
   }
@@ -79,60 +81,29 @@ class MediaMTXMSEPlayer {
     this.#setupWebSocket();
   }
 
-  #handleError(err) {
-    if (this.state === 'closed') {
-      return;
-    }
-
-    // Clean up current connection
-    if (this.ws !== null) {
-      this.ws.close();
-      this.ws = null;
-    }
-
-    if (this.mediaSource !== null && this.mediaSource.readyState === 'open') {
-      this.mediaSource.endOfStream();
-    }
-
-    this.sourceBuffer = null;
-    this.queue = [];
-    this.appending = false;
-
-    if (this.state === 'connecting' || this.state === 'running') {
-      this.state = 'restarting';
-
-      this.restartTimeout = setTimeout(() => {
-        this.restartTimeout = null;
-        if (this.state !== 'closed') {
-          this.start();
-        }
-      }, this.retryPause);
-
-      if (this.conf.onError) {
-        this.conf.onError(`${err}, retrying in ${this.retryPause / 1000} seconds`);
-      }
-    } else {
-      this.state = 'failed';
-      if (this.conf.onError) {
-        this.conf.onError(err);
-      }
-    }
-  }
-
   #setupMediaSource() {
     try {
       this.mediaSource = new MediaSource();
       this.conf.videoElement.src = URL.createObjectURL(this.mediaSource);
 
+      const myRetryId = this.retryId;
+
       this.mediaSource.addEventListener('sourceopen', () => {
+        if (myRetryId !== this.retryId) {
+          return; // stale
+        }
         if (this.state === 'closed') {
           return;
         }
         // MediaSource is ready, waiting for WebSocket data
       });
 
-      this.mediaSource.addEventListener('error', () => {
-        this.#handleError('MediaSource error');
+      this.mediaSource.addEventListener('error', (e) => {
+        if (myRetryId !== this.retryId) {
+          return; // stale
+        }
+        console.error('MediaSource error', e);
+        this.#handleError('MediaSource error', myRetryId);
       });
 
     } catch (err) {
@@ -145,7 +116,12 @@ class MediaMTXMSEPlayer {
       this.ws = new WebSocket(this.conf.url);
       this.ws.binaryType = 'arraybuffer';
 
+      const myRetryId = this.retryId;
+
       this.ws.onopen = () => {
+        if (myRetryId !== this.retryId) {
+          return; // stale
+        }
         if (this.state === 'closed') {
           return;
         }
@@ -153,23 +129,50 @@ class MediaMTXMSEPlayer {
       };
 
       this.ws.onclose = () => {
+        if (myRetryId !== this.retryId) {
+          return; // stale
+        }
         if (this.state === 'closed') {
           return;
         }
-        this.#handleError('WebSocket connection closed');
+        this.#handleError('WebSocket connection closed', myRetryId);
       };
 
       this.ws.onerror = () => {
+        if (myRetryId !== this.retryId) {
+          return; // stale
+        }
         if (this.state === 'closed') {
           return;
         }
-        this.#handleError('WebSocket connection error');
+        this.#handleError('WebSocket connection error', myRetryId);
       };
 
       this.ws.onmessage = (event) => {
+        if (myRetryId !== this.retryId) {
+          return; // stale
+        }
         if (this.state === 'closed') {
           return;
         }
+        // First message can be a string with a MIME hint from server
+        if (typeof event.data === 'string') {
+          const maybeMime = this.#parseMimeFromMessage(event.data);
+          if (maybeMime) {
+            this.pendingMime = maybeMime;
+            // If MediaSource is already open and no SourceBuffer yet, we can
+            // create it immediately; otherwise it will be created on first data
+            if (!this.sourceBuffer && this.mediaSource && this.mediaSource.readyState === 'open') {
+              try {
+                this.#createSourceBuffer(this.pendingMime, myRetryId);
+              } catch (e) {
+                this.#handleError(`Failed to create SourceBuffer: ${e.message}`, myRetryId);
+              }
+            }
+          }
+          return;
+        }
+        // Binary fMP4 data
         this.#handleData(new Uint8Array(event.data));
       };
 
@@ -196,7 +199,8 @@ class MediaMTXMSEPlayer {
       return;
     }
 
-    const mime = this.#detectCodec(initData);
+    // Prefer server-provided MIME if available, otherwise try to detect
+    const mime = this.pendingMime || this.#detectCodec(initData);
     
     if (!MediaSource.isTypeSupported(mime)) {
       this.#handleError('Codec not supported by this browser');
@@ -204,17 +208,7 @@ class MediaMTXMSEPlayer {
     }
 
     try {
-      this.sourceBuffer = this.mediaSource.addSourceBuffer(mime);
-      this.sourceBuffer.mode = 'segments';
-      
-      this.sourceBuffer.addEventListener('updateend', () => {
-        this.appending = false;
-        this.#appendNext();
-      });
-
-      this.sourceBuffer.addEventListener('error', () => {
-        this.#handleError('SourceBuffer error');
-      });
+      this.#createSourceBuffer(mime, this.retryId);
 
       this.#queueData(initData);
     } catch (err) {
@@ -251,6 +245,34 @@ class MediaMTXMSEPlayer {
     }
   }
 
+  #createSourceBuffer(mime, creationRetryId) {
+    if (!this.mediaSource || this.mediaSource.readyState !== 'open') {
+      throw new Error('MediaSource not open');
+    }
+    this.sourceBuffer = this.mediaSource.addSourceBuffer(mime);
+    //this.sourceBuffer.mode = 'segments';
+    // Use sequence to prevent errors when there are missing timestamps in the video
+    this.sourceBuffer.mode = 'sequence';
+
+    const myRetryId = creationRetryId ?? this.retryId;
+
+    this.sourceBuffer.addEventListener('updateend', () => {
+      if (myRetryId !== this.retryId) {
+        return; // stale
+      }
+      this.appending = false;
+      this.#appendNext();
+    });
+
+    this.sourceBuffer.addEventListener('error', (e) => {
+      if (myRetryId !== this.retryId) {
+        return; // stale
+      }
+      console.error('SourceBuffer error', e);
+      this.#handleError('SourceBuffer error', myRetryId);
+    });
+  }
+
   #detectCodec(initData) {
     // Naive detection: attempt common combinations
     // Browsers will reject unsupported ones
@@ -270,6 +292,68 @@ class MediaMTXMSEPlayer {
 
     // Fallback to a generic baseline
     return 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+  }
+
+  #parseMimeFromMessage(message) {
+    try {
+      const parsed = JSON.parse(message);
+      if (parsed && typeof parsed.mime === 'string') {
+        return parsed.mime;
+      }
+    } catch (_) {
+      // Not JSON, allow raw MIME string as a fallback
+      if (typeof message === 'string' && message.startsWith('video/')) {
+        return message;
+      }
+    }
+    return null;
+  }
+
+  #handleError(err, eventRetryId = this.retryId) {
+    if (this.state === 'closed' || eventRetryId !== this.retryId) {
+      return;
+    }
+
+    // Clean up current connection
+    if (this.ws !== null) {
+      this.ws.close();
+      this.ws = null;
+    }
+
+    if (this.mediaSource !== null && this.mediaSource.readyState === 'open') {
+      this.mediaSource.endOfStream();
+    }
+
+    this.sourceBuffer = null;
+    this.queue = [];
+    this.appending = false;
+
+    if (this.state === 'connecting' || this.state === 'running') {
+      this.state = 'restarting';
+
+      // Bump retryId so previous handlers become stale
+      const scheduledId = this.retryId + 1;
+      this.retryId = scheduledId;
+
+      this.restartTimeout = setTimeout(() => {
+        // Only restart if still relevant
+        if (this.restartTimeout) {
+          this.restartTimeout = null;
+        }
+        if (this.state !== 'closed' && this.retryId === scheduledId) {
+          this.start();
+        }
+      }, this.retryPause);
+
+      if (this.conf.onError) {
+        this.conf.onError(`${err}, retrying in ${this.retryPause / 1000} seconds`);
+      }
+    } else {
+      this.state = 'failed';
+      if (this.conf.onError) {
+        this.conf.onError(err);
+      }
+    }
   }
 }
 
